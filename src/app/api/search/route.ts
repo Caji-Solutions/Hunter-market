@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+export const runtime = 'edge'
+
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 const COMMISSION: Record<string, number> = {
   gold_pro: 16, gold_premium: 16, gold_special: 12,
@@ -307,228 +309,108 @@ async function searchML(keyword: string, deep: boolean): Promise<{ products: Gar
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ─── SHOPEE: Scraping ──────────────────────────────────────────────────────────
+// ─── SHOPEE: Scraping via Googlebot (SSR JSON-LD) ─────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
+
+const GOOGLEBOT_UA = 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
+
+function parseScriptJsonLD(html: string): unknown[] {
+  const results: unknown[] = []
+  const regex = /<script[^>]*>([\s\S]*?)<\/script>/g
+  let m: RegExpExecArray | null
+  while ((m = regex.exec(html)) !== null) {
+    const content = m[1].trim()
+    if (!content.startsWith('{')) continue
+    try {
+      results.push(JSON.parse(content))
+    } catch { /* ignorar */ }
+  }
+  return results
+}
+
+async function fetchShopeeProductData(url: string): Promise<GarimpoProduct | null> {
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': GOOGLEBOT_UA, 'Accept': 'text/html', 'Accept-Language': 'pt-BR,pt;q=0.9' },
+      signal: AbortSignal.timeout(10000),
+      redirect: 'follow',
+    })
+    if (!res.ok) return null
+    const html = await res.text()
+    for (const data of parseScriptJsonLD(html)) {
+      const d = data as Record<string, unknown>
+      if (d['@type'] !== 'Product') continue
+      const offersObj = (d.offers as Record<string, unknown>) ?? {}
+      // Shopee usa "Offer" (price) ou "AggregateOffer" (lowPrice) dependendo do produto
+      const price = parseFloat(String(offersObj.price ?? offersObj.lowPrice ?? offersObj.highPrice ?? 0))
+      if (!price || price <= 0 || price > 50000) continue
+      const rating = parseFloat(String((d.aggregateRating as Record<string, unknown>)?.ratingValue ?? 0)) || null
+      const reviewCount = parseInt(String((d.aggregateRating as Record<string, unknown>)?.ratingCount ?? 0), 10) || null
+      const idMatch = url.match(/i\.(\d+)\.(\d+)/)
+      const id = idMatch ? `shopee-${idMatch[1]}-${idMatch[2]}` : `shopee-${Math.random().toString(36).slice(2)}`
+      return buildSourceProduct({
+        id, title: String(d.name ?? '').trim(), sourcePrice: price,
+        image: String(d.image ?? ''), url: String(d.url ?? url),
+        rating: rating && rating > 0 ? Math.min(5, rating) : null,
+        reviewCount: reviewCount && reviewCount > 0 ? reviewCount : null,
+        soldQuantity: 0, freeShipping: false, platform: 'shopee',
+      })
+    }
+    return null
+  } catch { return null }
+}
 
 async function searchShopee(keyword: string, deep: boolean): Promise<GarimpoProduct[]> {
-  const limit = deep ? 60 : 30
-  const endpoints = [
-    // Endpoint principal da busca Shopee BR
-    `https://shopee.com.br/api/v4/search/search_items?by=sales&keyword=${encodeURIComponent(keyword)}&limit=${limit}&newest=0&order=desc&page_type=search&scenario=PAGE_GLOBAL_SEARCH&version=2`,
-    // Fallback com menos parâmetros
-    `https://shopee.com.br/api/v4/search/search_items?keyword=${encodeURIComponent(keyword)}&limit=${Math.min(limit, 30)}&newest=0`,
-  ]
+  const limit = deep ? 15 : 8
+  try {
+    // 1. Busca na página de resultados com Googlebot (Shopee entrega SSR com JSON-LD)
+    const searchUrl = `https://shopee.com.br/search?keyword=${encodeURIComponent(keyword)}&sortBy=sales`
+    const res = await fetch(searchUrl, {
+      headers: { 'User-Agent': GOOGLEBOT_UA, 'Accept': 'text/html,application/xhtml+xml', 'Accept-Language': 'pt-BR,pt;q=0.9' },
+      signal: AbortSignal.timeout(15000),
+      redirect: 'follow',
+    })
+    if (!res.ok) return []
+    const html = await res.text()
 
-  for (const url of endpoints) {
-    try {
-      // Primeiro pega cookies da homepage
-      const initRes = await fetch('https://shopee.com.br/', {
-        headers: BROWSER_HEADERS,
-        signal: AbortSignal.timeout(8000),
-        redirect: 'follow',
-      })
-      const setCookies = initRes.headers.getSetCookie?.() ?? []
-      const cookieStr = setCookies.map(c => c.split(';')[0].trim()).filter(Boolean).join('; ')
-
-      const res = await fetch(url, {
-        headers: {
-          'User-Agent': BROWSER_HEADERS['User-Agent'],
-          'Accept': 'application/json',
-          'Accept-Language': 'pt-BR,pt;q=0.9',
-          'Referer': `https://shopee.com.br/search?keyword=${encodeURIComponent(keyword)}`,
-          'x-api-source': 'pc',
-          'x-requested-with': 'XMLHttpRequest',
-          ...(cookieStr && { 'Cookie': cookieStr }),
-        },
-        signal: AbortSignal.timeout(12000),
-      })
-
-      if (!res.ok) continue
-      const data = await res.json()
-      const items = (data.items ?? []) as Array<Record<string, unknown>>
-      if (items.length === 0) continue
-
-      const products: GarimpoProduct[] = []
-      for (const item of items) {
-        const b = (item.item_basic ?? {}) as Record<string, unknown>
-        const rawPrice = (b.price as number | null) ?? 0
-        // Shopee preços são em unidade x 100000 (ex: 8990000 = R$89,90)
-        const price = rawPrice > 1000 ? rawPrice / 100000 : rawPrice
-        if (price <= 0 || price > 50000) continue
-
-        const title = (b.name as string | null) ?? ''
-        if (!title) continue
-
-        const shopId   = (b.shopid as number | null) ?? 0
-        const itemId   = (b.itemid as number | null) ?? 0
-        const imgHash  = (b.image as string | null) ?? ''
-        const image    = imgHash ? `https://down-br.img.susercontent.com/file/${imgHash}` : ''
-        const url      = `https://shopee.com.br/product/${shopId}/${itemId}`
-        const sold     = (b.sold as number | null) ?? 0
-        const ratingRaw = (b.item_rating as Record<string, unknown> | null)?.rating_star as number | null
-        const rating   = ratingRaw ? Math.round(ratingRaw * 10) / 10 : null
-        const reviewCount = (b.item_rating as Record<string, unknown> | null)?.rating_count as number | null ?? null
-
-        products.push(buildSourceProduct({
-          id: `shopee-${shopId}-${itemId}`,
-          title, sourcePrice: price, image, url,
-          rating, reviewCount: Array.isArray(reviewCount) ? (reviewCount as number[]).reduce((a, b) => a + b, 0) : (reviewCount ?? null),
-          soldQuantity: sold, freeShipping: false, platform: 'shopee',
-        }))
+    // 2. Extrai URLs de produtos do JSON-LD (ItemList + Product featured)
+    const productUrls: string[] = []
+    const seen = new Set<string>()
+    for (const data of parseScriptJsonLD(html)) {
+      const d = data as Record<string, unknown>
+      if (d['@type'] === 'Product' && typeof d.url === 'string') {
+        if (!seen.has(d.url)) { seen.add(d.url); productUrls.unshift(d.url) }
+      } else if (d['@type'] === 'ItemList' && Array.isArray(d.itemListElement)) {
+        for (const item of d.itemListElement as Record<string, unknown>[]) {
+          if (typeof item.url === 'string' && !seen.has(item.url)) {
+            seen.add(item.url); productUrls.push(item.url)
+          }
+        }
       }
-
-      if (products.length > 0) return products
-    } catch (err) {
-      console.error('[Shopee] endpoint error:', err instanceof Error ? err.message : err)
     }
-  }
+    if (productUrls.length === 0) return []
 
-  return []
+    // 3. Busca páginas de produto em paralelo para obter preços
+    const toFetch = productUrls.slice(0, limit)
+    const settled = await Promise.allSettled(toFetch.map(url => fetchShopeeProductData(url)))
+    return settled.flatMap(r => r.status === 'fulfilled' && r.value ? [r.value] : [])
+  } catch (err) {
+    console.error('[Shopee]', err instanceof Error ? err.message : err)
+    return []
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ─── ALIEXPRESS: Scraping ─────────────────────────────────────────────────────
+// ─── ALIEXPRESS: Bloqueado por CAPTCHA server-side ────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function searchAliExpress(keyword: string, deep: boolean): Promise<GarimpoProduct[]> {
-  const slug = keyword.toLowerCase().replace(/\s+/g, '-')
-  const urls = [
-    `https://pt.aliexpress.com/wholesale?SearchText=${encodeURIComponent(keyword)}&SortType=total_transt_desc&initiative_id=SB_20241201`,
-    `https://www.aliexpress.com/w/wholesale-${encodeURIComponent(slug)}.html?SearchText=${encodeURIComponent(keyword)}&SortType=total_transt_desc`,
-  ]
-
-  for (const url of urls) {
-    try {
-      const res = await fetch(url, {
-        headers: {
-          ...BROWSER_HEADERS,
-          'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
-        },
-        signal: AbortSignal.timeout(15000),
-        redirect: 'follow',
-      })
-      if (!res.ok) continue
-      const html = await res.text()
-
-      // Tenta extrair window.runParams que contém os produtos
-      const runParamsMatch = html.match(/window\.runParams\s*=\s*(\{[\s\S]*?\});\s*(?:var|window|<\/script>)/)
-      if (runParamsMatch) {
-        try {
-          const runParams = JSON.parse(runParamsMatch[1])
-          const mods = runParams?.data?.root?.fields?.mods ?? runParams?.mods ?? {}
-          const itemList = mods?.itemList?.content ?? mods?.list?.content ?? []
-          if (Array.isArray(itemList) && itemList.length > 0) {
-            const products = parseAliExpressItems(itemList, deep)
-            if (products.length > 0) return products
-          }
-        } catch { /* continua */ }
-      }
-
-      // Tenta extrair _dida_index_data ou similar
-      const didaMatch = html.match(/(?:window\.__dida_index__|data-page-seo-data).*?=\s*'([^']+)'/)
-      if (didaMatch) {
-        try {
-          const decoded = decodeURIComponent(didaMatch[1])
-          const data = JSON.parse(decoded)
-          const items = data?.itemList?.content ?? []
-          if (Array.isArray(items) && items.length > 0) {
-            const products = parseAliExpressItems(items, deep)
-            if (products.length > 0) return products
-          }
-        } catch { /* continua */ }
-      }
-
-      // Tenta extrair JSON de _DATA_
-      const dataMatch = html.match(/<script\s+type="application\/json"\s+id="_DATA_">([^<]+)<\/script>/)
-      if (dataMatch) {
-        try {
-          const data = JSON.parse(dataMatch[1])
-          const items = findKey<unknown[]>(data, 'content') ?? []
-          if (Array.isArray(items) && items.length > 0) {
-            const products = parseAliExpressItems(items, deep)
-            if (products.length > 0) return products
-          }
-        } catch { /* continua */ }
-      }
-
-    } catch (err) {
-      console.error('[AliExpress] error:', err instanceof Error ? err.message : err)
-    }
-  }
-
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function searchAliExpress(_keyword: string, _deep: boolean): Promise<GarimpoProduct[]> {
+  // AliExpress bloqueia todas as requisições server-side com CAPTCHA/bot detection.
+  // Requer navegador com JavaScript para funcionar.
   return []
 }
 
-function parseAliExpressItems(items: unknown[], deep: boolean): GarimpoProduct[] {
-  const limit = deep ? 60 : 30
-  const products: GarimpoProduct[] = []
-  const seen = new Set<string>()
-
-  for (const raw of items.slice(0, limit)) {
-    try {
-      const item = raw as Record<string, unknown>
-
-      // Extrai ID
-      const productId = String(item.productId ?? item.itemId ?? item.id ?? '')
-      if (!productId || seen.has(productId)) continue
-      seen.add(productId)
-
-      // Extrai título
-      const title = String(
-        (item.title as Record<string, unknown>)?.displayTitle ??
-        item.title ?? item.name ?? ''
-      )
-      if (!title || title.length < 3) continue
-
-      // Extrai preço
-      const priceObj = item.prices ?? item.price ?? item.salePrice ?? {}
-      const priceStr = String(
-        ((priceObj as Record<string, unknown>)?.salePrice as Record<string, unknown>)?.minPrice ??
-        ((priceObj as Record<string, unknown>)?.minActivityAmount as Record<string, unknown>)?.value ??
-        ((priceObj as Record<string, unknown>)?.minAmount as Record<string, unknown>)?.value ??
-        (priceObj as Record<string, unknown>)?.value ??
-        item.salePrice ?? 0
-      ).replace(/[^0-9.]/g, '')
-      const price = parseFloat(priceStr) || 0
-      if (price <= 0 || price > 50000) continue
-
-      // Extrai imagem
-      const imgObj = item.image ?? item.imageUrl ?? {}
-      const image = String(
-        (imgObj as Record<string, unknown>)?.imgUrl ??
-        (imgObj as Record<string, unknown>)?.url ??
-        item.imageUrl ?? ''
-      )
-      const imageUrl = image.startsWith('//') ? `https:${image}` : image
-
-      // URL do produto
-      const productUrl = String(item.productDetailUrl ?? item.detailUrl ?? '')
-      const url = productUrl.startsWith('//') ? `https:${productUrl}` : productUrl || `https://pt.aliexpress.com/item/${productId}.html`
-
-      // Vendas e avaliação
-      const sold = parseInt(String(
-        (item.trade as Record<string, unknown>)?.tradeCount ??
-        item.orders ?? item.sold ?? 0
-      ).replace(/[^0-9]/g, ''), 10) || 0
-
-      const ratingRaw = parseFloat(String(
-        (item.evaluation as Record<string, unknown>)?.starRating ??
-        item.starRating ?? item.averageStar ?? 0
-      )) || null
-      const rating = ratingRaw && ratingRaw > 0 ? ratingRaw : null
-
-      products.push(buildSourceProduct({
-        id: `ali-${productId}`,
-        title, sourcePrice: price, image: imageUrl, url,
-        rating, reviewCount: null,
-        soldQuantity: sold, freeShipping: true, // AliExpress geralmente frete grátis
-        platform: 'aliexpress',
-      }))
-    } catch { /* ignorar itens com erro de parse */ }
-  }
-
-  return products
-}
 
 // ─── GET handler: health check ────────────────────────────────────────────────
 export async function GET() {
