@@ -1,0 +1,98 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Product {
+  id             String   @id @default(cuid())
+  marketplace    String
+  externalId     String
+  url            String
+  title          String
+  categoryId     String?
+  categoryName   String?
+  sellerId       String?
+  sellerName     String?
+  listingType    String?
+  thumbnail      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  snapshots  ProductSnapshot[]
+  analyses   ProfitabilityAnalysis[]
+  suppliers  ProductSupplier[]
+
+  @@unique([marketplace, externalId])
+}
+
+model ProductSnapshot {
+  id                String   @id @default(cuid())
+  productId         String
+  price             Float
+  originalPrice     Float?
+  soldQuantity      Int?
+  availableQuantity Int?
+  freeShipping      Boolean  @default(false)
+  logisticType      String?
+  capturedAt        DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id])
+}
+
+model ProfitabilityAnalysis {
+  id                       String   @id @default(cuid())
+  productId                String
+  supplierCost             Float
+  salePrice                Float
+  marketplaceCommissionPct Float
+  marketplaceCommissionVal Float
+  marketplaceFixedFee      Float    @default(0)
+  shippingCost             Float    @default(0)
+  taxRate                  Float    @default(6)
+  taxValue                 Float    @default(0)
+  otherCosts               Float    @default(0)
+  grossProfit              Float
+  netProfit                Float
+  marginPct                Float
+  roiPct                   Float
+  breakEvenPrice           Float
+  createdAt                DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id])
+}
+
+model ProductSupplier {
+  id                  String   @id @default(cuid())
+  productId           String
+  source              String
+  supplierUrl         String?
+  supplierTitle       String?
+  supplierPrice       Float?
+  shippingTimeDaysMin Int?
+  shippingTimeDaysMax Int?
+  shippingCost        Float?
+  sellerRating        Float?
+  ordersCount         Int?
+  imageUrl            String?
+  isPrimary           Boolean  @default(false)
+  createdAt           DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id])
+}
+
+model ShippingQuote {
+  id             String   @id @default(cuid())
+  fromCep        String
+  toCep          String
+  productWeight  Float
+  productWidth   Float
+  productHeight  Float
+  productLength  Float
+  insuranceValue Float
+  quotesJson     String
+  createdAt      DateTime @default(now())
+}

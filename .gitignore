@@ -39,3 +39,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/src/generated/prisma
+
+# SQLite database local
+*.db
+*.db-journal
+
+# Next.js HTTPS dev certificates (gerados automaticamente)
+certificates/
+
+# Scripts de teste local
+test-scrape.js
