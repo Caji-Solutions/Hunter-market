@@ -9,6 +9,8 @@ import {
 } from 'lucide-react'
 import { formatCurrency, formatNumber, formatPercent } from '@/lib/utils'
 
+type SearchPlatform = 'mercadolivre' | 'shopee' | 'aliexpress' | 'todos'
+
 interface GarimpoProduct {
   id: string
   title: string
@@ -16,6 +18,7 @@ interface GarimpoProduct {
   image: string
   url: string
   brand: string
+  platform: 'mercadolivre' | 'shopee' | 'aliexpress'
   rating: number | null
   reviewCount: number | null
   soldQuantity: number
@@ -38,6 +41,7 @@ interface GarimpoResult {
   stats: { avgScore: number; topScore: number; withSales: number; withFulfillment: number }
   products: GarimpoProduct[]
   strategy?: string
+  platforms?: { mercadolivre: number; shopee: number; aliexpress: number }
 }
 
 interface AIInsights {
@@ -300,6 +304,19 @@ function DescribeModal({
   )
 }
 
+const PLATFORM_CONFIG: Record<SearchPlatform, { label: string; emoji: string; color: string; activeColor: string }> = {
+  todos:         { label: 'Todos',          emoji: '🌐', color: 'text-gray-400 border-gray-700 bg-gray-800',          activeColor: 'text-blue-400 border-blue-500/50 bg-blue-500/10' },
+  mercadolivre:  { label: 'Mercado Livre',  emoji: '🛒', color: 'text-gray-400 border-gray-700 bg-gray-800',          activeColor: 'text-yellow-400 border-yellow-500/50 bg-yellow-500/10' },
+  shopee:        { label: 'Shopee',         emoji: '🟠', color: 'text-gray-400 border-gray-700 bg-gray-800',          activeColor: 'text-orange-400 border-orange-500/50 bg-orange-500/10' },
+  aliexpress:    { label: 'AliExpress',     emoji: '📦', color: 'text-gray-400 border-gray-700 bg-gray-800',          activeColor: 'text-red-400 border-red-500/50 bg-red-500/10' },
+}
+
+const PLATFORM_BADGE: Record<string, { label: string; classes: string }> = {
+  mercadolivre: { label: 'ML', classes: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' },
+  shopee:       { label: 'Shopee', classes: 'bg-orange-500/20 text-orange-400 border-orange-500/30' },
+  aliexpress:   { label: 'AliExp', classes: 'bg-red-500/20 text-red-400 border-red-500/30' },
+}
+
 export function GarimpoTab({ onSelectProduct }: { onSelectProduct: (url: string) => void }) {
   const [keyword, setKeyword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -307,6 +324,7 @@ export function GarimpoTab({ onSelectProduct }: { onSelectProduct: (url: string)
   const [result, setResult] = useState<GarimpoResult | null>(null)
   const [showFilters, setShowFilters] = useState(false)
   const [deepSearch, setDeepSearch] = useState(false)
+  const [platform, setPlatform] = useState<SearchPlatform>('todos')
 
   // Filtros
   const [minPrice, setMinPrice] = useState('')
@@ -341,6 +359,7 @@ export function GarimpoTab({ onSelectProduct }: { onSelectProduct: (url: string)
         body: JSON.stringify({
           keyword: q.trim(),
           deepSearch,
+          platform,
           minPrice: minPrice ? parseFloat(minPrice) : undefined,
           maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
           minRating: minRating ? parseFloat(minRating) : undefined,
@@ -455,6 +474,24 @@ export function GarimpoTab({ onSelectProduct }: { onSelectProduct: (url: string)
           </button>
         </div>
 
+        {/* Seletor de Plataformas */}
+        <div className="mt-3 flex items-center justify-center gap-2 flex-wrap">
+          {(Object.keys(PLATFORM_CONFIG) as SearchPlatform[]).map((p) => {
+            const cfg = PLATFORM_CONFIG[p]
+            const isActive = platform === p
+            return (
+              <button
+                key={p}
+                onClick={() => setPlatform(p)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-sm font-medium transition ${isActive ? cfg.activeColor : cfg.color + ' hover:text-white hover:border-gray-600'}`}
+              >
+                <span>{cfg.emoji}</span>
+                <span className="hidden sm:inline">{cfg.label}</span>
+              </button>
+            )
+          })}
+        </div>
+
         {/* Busca Profunda toggle */}
         <div className="mt-3 flex items-center justify-center gap-3">
           <button
@@ -471,7 +508,7 @@ export function GarimpoTab({ onSelectProduct }: { onSelectProduct: (url: string)
           </button>
           {deepSearch && (
             <span className="text-xs text-gray-500">
-              3 páginas do ML · leva ~20s
+              {platform === 'todos' ? 'Busca em 3 plataformas · leva ~40s' : '3 páginas · leva ~20s'}
             </span>
           )}
         </div>
@@ -572,6 +609,25 @@ export function GarimpoTab({ onSelectProduct }: { onSelectProduct: (url: string)
               <p className="text-xs text-gray-500 mt-0.5">
                 {result.rawCount} coletados · {result.enrichedCount} analisados · Ordenados por score
               </p>
+              {result.platforms && (
+                <div className="flex flex-wrap gap-2 mt-1.5">
+                  {result.platforms.mercadolivre > 0 && (
+                    <span className="text-xs px-2 py-0.5 rounded-full border bg-yellow-500/10 text-yellow-400 border-yellow-500/20">
+                      🛒 ML: {result.platforms.mercadolivre}
+                    </span>
+                  )}
+                  {result.platforms.shopee > 0 && (
+                    <span className="text-xs px-2 py-0.5 rounded-full border bg-orange-500/10 text-orange-400 border-orange-500/20">
+                      🟠 Shopee: {result.platforms.shopee}
+                    </span>
+                  )}
+                  {result.platforms.aliexpress > 0 && (
+                    <span className="text-xs px-2 py-0.5 rounded-full border bg-red-500/10 text-red-400 border-red-500/20">
+                      📦 AliExpress: {result.platforms.aliexpress}
+                    </span>
+                  )}
+                </div>
+              )}
               <div className="flex flex-wrap gap-3 mt-2">
                 <span className="flex items-center gap-1 text-xs text-gray-400">
                   <Award className="w-3 h-3 text-orange-400" />
@@ -696,6 +752,8 @@ function ProductCard({
 }) {
   const scoreClasses = getScoreColor(product.score)
   const marginColor = getMarginColor(product.marginEstimate)
+  const badge = PLATFORM_BADGE[product.platform]
+  const isML = product.platform === 'mercadolivre'
 
   return (
     <div className={`bg-gray-900 border rounded-xl overflow-hidden hover:border-gray-700 transition group flex flex-col ${
@@ -728,6 +786,12 @@ function ProductCard({
           <Award className="w-3 h-3" />
           {product.score}
         </div>
+
+        {badge && (
+          <div className={`absolute bottom-2 right-2 px-2 py-0.5 rounded border text-xs font-semibold ${badge.classes}`}>
+            {badge.label}
+          </div>
+        )}
 
         {product.freeShipping && (
           <div className="absolute bottom-2 left-2 flex items-center gap-1 px-2 py-0.5 bg-green-500/20 border border-green-500/30 rounded text-xs text-green-400">
@@ -799,12 +863,23 @@ function ProductCard({
 
         {/* Ações */}
         <div className="flex gap-2 mt-auto">
-          <button
-            onClick={onAnalyze}
-            className="flex-1 py-2 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold rounded-lg transition flex items-center justify-center gap-1.5"
-          >
-            <TrendingUp className="w-3.5 h-3.5" /> Analisar
-          </button>
+          {isML ? (
+            <button
+              onClick={onAnalyze}
+              className="flex-1 py-2 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold rounded-lg transition flex items-center justify-center gap-1.5"
+            >
+              <TrendingUp className="w-3.5 h-3.5" /> Analisar
+            </button>
+          ) : (
+            <a
+              href={product.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-1 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm font-semibold rounded-lg transition flex items-center justify-center gap-1.5"
+            >
+              <ExternalLink className="w-3.5 h-3.5" /> Ver Produto
+            </a>
+          )}
           <button
             onClick={onDescribe}
             disabled={describeLoading}
@@ -813,15 +888,17 @@ function ProductCard({
           >
             {describeLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Brain className="w-3.5 h-3.5" />}
           </button>
-          <a
-            href={product.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-3 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white text-sm rounded-lg transition flex items-center justify-center"
-            title="Ver no Mercado Livre"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-          </a>
+          {isML && (
+            <a
+              href={product.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white text-sm rounded-lg transition flex items-center justify-center"
+              title="Ver no Mercado Livre"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          )}
         </div>
       </div>
     </div>

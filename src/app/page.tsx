@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Search, TrendingUp, Package, DollarSign, Star, ExternalLink, Loader2, BarChart3, ShoppingCart, Zap, AlertCircle, Gem, CheckCircle2, LogIn, X, Brain, Lightbulb, ShieldAlert, ThumbsUp, ThumbsDown, Copy, Check, ChevronDown, ChevronUp } from 'lucide-react'
+import { useState } from 'react'
+import { Search, TrendingUp, Package, DollarSign, Star, ExternalLink, Loader2, BarChart3, ShoppingCart, Zap, AlertCircle, Gem, Brain, Lightbulb, ShieldAlert, ThumbsUp, ThumbsDown, Copy, Check, ChevronDown, ChevronUp } from 'lucide-react'
 import type { ProductAnalysis, ProfitResult, Supplier, ShippingQuote } from '@/types'
 import { formatCurrency, formatNumber, formatPercent, getScoreLabel } from '@/lib/utils'
 import { ScoreGauge } from '@/components/ScoreGauge'
@@ -209,61 +209,11 @@ export default function Home() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [shippingQuotes, setShippingQuotes] = useState<ShippingQuote[]>([])
 
-  const [mlUserId, setMlUserId] = useState<string | null>(null)
-  const [mlConnecting, setMlConnecting] = useState(false)
-  const [mlNotification, setMlNotification] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
-
   // IA
   const [aiProductAnalysis, setAIProductAnalysis] = useState<ProductAIAnalysis | null>(null)
   const [aiProductLoading, setAIProductLoading] = useState(false)
   const [aiDescription, setAIDescription] = useState<AIDescription | null>(null)
   const [aiDescribeLoading, setAIDescribeLoading] = useState(false)
-
-  useEffect(() => {
-    // Lê o cookie ml_user_id (não HttpOnly, acessível no client)
-    const match = document.cookie.match(/(?:^|;\s*)ml_user_id=([^;]*)/)
-    if (match) setMlUserId(decodeURIComponent(match[1]))
-
-    // Verifica resultado do OAuth na URL
-    const params = new URLSearchParams(window.location.search)
-    const mlAuth = params.get('ml_auth')
-    if (mlAuth === 'success') {
-      const cookieMatch = document.cookie.match(/(?:^|;\s*)ml_user_id=([^;]*)/)
-      if (cookieMatch) setMlUserId(decodeURIComponent(cookieMatch[1]))
-      setMlNotification({ type: 'success', msg: 'Mercado Livre conectado com sucesso! Buscas agora usam a API oficial.' })
-      window.history.replaceState({}, '', '/')
-    } else if (mlAuth === 'error') {
-      const reason = params.get('reason') ?? 'erro desconhecido'
-      setMlNotification({ type: 'error', msg: `Erro ao conectar ao ML: ${reason}` })
-      window.history.replaceState({}, '', '/')
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!mlNotification) return
-    const t = setTimeout(() => setMlNotification(null), 6000)
-    return () => clearTimeout(t)
-  }, [mlNotification])
-
-  async function handleMLConnect() {
-    setMlConnecting(true)
-    try {
-      const res = await fetch('/api/auth/ml')
-      const data = await res.json()
-      if (data.authUrl) window.location.href = data.authUrl
-      else setMlNotification({ type: 'error', msg: 'Não foi possível obter a URL de autorização.' })
-    } catch {
-      setMlNotification({ type: 'error', msg: 'Erro ao iniciar conexão com o Mercado Livre.' })
-    } finally {
-      setMlConnecting(false)
-    }
-  }
-
-  async function handleMLDisconnect() {
-    await fetch('/api/auth/ml/logout', { method: 'POST' })
-    setMlUserId(null)
-    setMlNotification({ type: 'success', msg: 'Desconectado do Mercado Livre. Buscas voltam ao modo scraping.' })
-  }
 
   async function handleAnalyze(directUrl?: string) {
     const targetUrl = (directUrl ?? url).trim()
@@ -422,70 +372,7 @@ export default function Home() {
             </span>
           </div>
 
-          <div className="flex items-center gap-3">
-            {/* Notificação OAuth */}
-            {mlNotification && (
-              <div className={`hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs border ${
-                mlNotification.type === 'success'
-                  ? 'bg-green-500/10 text-green-400 border-green-500/20'
-                  : 'bg-red-500/10 text-red-400 border-red-500/20'
-              }`}>
-                {mlNotification.type === 'success'
-                  ? <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-                  : <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-                }
-                <span className="max-w-xs truncate">{mlNotification.msg}</span>
-                <button onClick={() => setMlNotification(null)} className="opacity-60 hover:opacity-100 ml-1">
-                  <X className="w-3 h-3" />
-                </button>
-              </div>
-            )}
-
-            {/* Botão conectar/desconectar ML */}
-            {mlUserId ? (
-              <div className="flex items-center gap-2">
-                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500/10 border border-green-500/20 rounded-lg text-xs text-green-400">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">ML Conectado</span>
-                </div>
-                <button
-                  onClick={handleMLDisconnect}
-                  className="px-3 py-1.5 text-xs text-gray-400 hover:text-white border border-gray-700 hover:border-gray-600 rounded-lg transition"
-                >
-                  Sair
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={handleMLConnect}
-                disabled={mlConnecting}
-                title="Conectar ao Mercado Livre para usar a API oficial (buscas mais precisas)"
-                className="flex items-center gap-2 px-4 py-2 bg-yellow-500/10 hover:bg-yellow-500/20 border border-yellow-500/30 hover:border-yellow-500/50 text-yellow-400 rounded-lg text-sm font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {mlConnecting
-                  ? <Loader2 className="w-4 h-4 animate-spin" />
-                  : <LogIn className="w-4 h-4" />
-                }
-                <span className="hidden sm:inline">Conectar ML</span>
-              </button>
-            )}
-          </div>
         </div>
-
-        {/* Banner de notificação mobile */}
-        {mlNotification && (
-          <div className={`sm:hidden px-4 py-2 text-xs flex items-center gap-2 border-t ${
-            mlNotification.type === 'success'
-              ? 'bg-green-500/10 text-green-400 border-green-500/20'
-              : 'bg-red-500/10 text-red-400 border-red-500/20'
-          }`}>
-            {mlNotification.type === 'success'
-              ? <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-              : <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-            }
-            <span>{mlNotification.msg}</span>
-          </div>
-        )}
       </header>
 
       <div className="max-w-7xl mx-auto px-4 py-8">
