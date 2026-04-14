@@ -313,35 +313,41 @@ export async function POST(req: NextRequest) {
     // Calcular comissão via tabela local (não precisa de API)
     const commission = getCommission(item.listingType, item.price)
 
-    // Salvar no banco
-    const product = await prisma.product.upsert({
-      where: { marketplace_externalId: { marketplace: 'mercadolivre', externalId: item.id } },
-      update: { title: item.title, updatedAt: new Date() },
-      create: {
-        marketplace: 'mercadolivre',
-        externalId: item.id,
-        url,
-        title: item.title,
-        categoryId: item.categoryId,
-        categoryName: item.categoryName,
-        sellerId: item.sellerId,
-        sellerName: item.sellerName,
-        listingType: item.listingType,
-        thumbnail: item.thumbnail,
-      },
-    })
-
-    await prisma.productSnapshot.create({
-      data: {
-        productId: product.id,
-        price: item.price,
-        originalPrice: item.originalPrice,
-        soldQuantity: item.soldQuantity,
-        availableQuantity: item.availableQuantity,
-        freeShipping: item.freeShipping,
-        logisticType: item.logisticType,
-      },
-    })
+    // Salvar no banco — operação opcional (SQLite não funciona em Vercel/serverless)
+    // Se o banco estiver indisponível, a análise continua normalmente sem persistência.
+    let persistedId = item.id
+    try {
+      const product = await prisma.product.upsert({
+        where: { marketplace_externalId: { marketplace: 'mercadolivre', externalId: item.id } },
+        update: { title: item.title, updatedAt: new Date() },
+        create: {
+          marketplace: 'mercadolivre',
+          externalId: item.id,
+          url,
+          title: item.title,
+          categoryId: item.categoryId,
+          categoryName: item.categoryName,
+          sellerId: item.sellerId,
+          sellerName: item.sellerName,
+          listingType: item.listingType,
+          thumbnail: item.thumbnail,
+        },
+      })
+      await prisma.productSnapshot.create({
+        data: {
+          productId: product.id,
+          price: item.price,
+          originalPrice: item.originalPrice,
+          soldQuantity: item.soldQuantity,
+          availableQuantity: item.availableQuantity,
+          freeShipping: item.freeShipping,
+          logisticType: item.logisticType,
+        },
+      })
+      persistedId = product.id
+    } catch (dbErr) {
+      console.warn('[analyze] DB indisponível, continuando sem persistência:', dbErr instanceof Error ? dbErr.message : dbErr)
+    }
 
     const score = calcOpportunityScore({
       soldQuantity: item.soldQuantity,
@@ -357,7 +363,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       product: {
-        id: product.id,
+        id: persistedId,
         externalId: item.id,
         title: item.title,
         price: item.price,
