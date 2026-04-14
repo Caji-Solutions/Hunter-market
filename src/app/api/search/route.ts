@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getMLToken } from '@/lib/ml-token'
+import { getMLToken, getMLAppToken } from '@/lib/ml-token'
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
 const COMMISSION: Record<string, number> = {
@@ -487,27 +487,30 @@ export async function POST(req: NextRequest) {
     }
 
     const cleanKeyword = keyword.trim()
-    const token = await getMLToken()
+
+    // Prioridade: token do usuário (OAuth) > app token (client_credentials) > scraping
+    const userToken = await getMLToken()
+    const token = userToken ?? await getMLAppToken()
 
     let products: GarimpoProduct[] = []
     let strategy = 'scraping'
 
-    // ── Tenta API oficial primeiro (quando autenticado) ────────────────────
+    // ── Tenta API oficial (usuário autenticado ou app token) ───────────────
     if (token) {
       const apiResult = await searchViaAPI(token, cleanKeyword, doDeep)
       if (apiResult !== null) {
         products = apiResult
-        strategy = 'ml-api-oauth'
+        strategy = userToken ? 'ml-api-oauth' : 'ml-api-app'
       }
-      // Se token inválido (null retornado), cai no scraping abaixo
+      // Se token inválido, cai no scraping abaixo
     }
 
-    // ── Fallback: scraping ────────────────────────────────────────────────
+    // ── Fallback: scraping (sem credenciais ou API falhou) ────────────────
     if (products.length === 0 && strategy === 'scraping') {
       const { products: scraped, blocked } = await searchViaScraping(cleanKeyword, doDeep)
       if (blocked) {
         return NextResponse.json({
-          error: 'O Mercado Livre ativou proteção anti-bot. Aguarde 2-3 minutos e tente novamente. Dica: conecte sua conta ML para usar a API oficial e evitar esse problema.',
+          error: 'O Mercado Livre bloqueou a busca. Configure ML_CLIENT_ID e ML_CLIENT_SECRET no Vercel para resolver definitivamente.',
         }, { status: 429 })
       }
       products = scraped
