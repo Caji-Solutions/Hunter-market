@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getMLToken, getMLAppToken } from '@/lib/ml-token'
+import { getMLToken, getMLServerToken } from '@/lib/ml-token'
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
 const COMMISSION: Record<string, number> = {
@@ -488,29 +488,28 @@ export async function POST(req: NextRequest) {
 
     const cleanKeyword = keyword.trim()
 
-    // Prioridade: token do usuário (OAuth) > app token (client_credentials) > scraping
-    const userToken = await getMLToken()
-    const token = userToken ?? await getMLAppToken()
+    // Prioridade: token do usuário > server token (ML_REFRESH_TOKEN) > scraping
+    const userToken   = await getMLToken()
+    const serverToken = userToken ?? await getMLServerToken()
 
     let products: GarimpoProduct[] = []
     let strategy = 'scraping'
 
-    // ── Tenta API oficial (usuário autenticado ou app token) ───────────────
-    if (token) {
-      const apiResult = await searchViaAPI(token, cleanKeyword, doDeep)
+    // ── Tenta API oficial quando há token válido ────────────────────────────
+    if (serverToken) {
+      const apiResult = await searchViaAPI(serverToken, cleanKeyword, doDeep)
       if (apiResult !== null) {
         products = apiResult
-        strategy = userToken ? 'ml-api-oauth' : 'ml-api-app'
+        strategy = userToken ? 'ml-api-oauth' : 'ml-api-server'
       }
-      // Se token inválido, cai no scraping abaixo
     }
 
-    // ── Fallback: scraping (sem credenciais ou API falhou) ────────────────
+    // ── Fallback: scraping ────────────────────────────────────────────────
     if (products.length === 0 && strategy === 'scraping') {
       const { products: scraped, blocked } = await searchViaScraping(cleanKeyword, doDeep)
       if (blocked) {
         return NextResponse.json({
-          error: 'O Mercado Livre bloqueou a busca. Configure ML_CLIENT_ID e ML_CLIENT_SECRET no Vercel para resolver definitivamente.',
+          error: 'Busca bloqueada. Configure ML_REFRESH_TOKEN no Vercel (veja instruções em /api/auth/ml/status).',
         }, { status: 429 })
       }
       products = scraped

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { extractMLId, isMLCatalogUrl } from '@/lib/utils'
-import { getMLToken, getMLAppToken } from '@/lib/ml-token'
+import { getMLToken, getMLServerToken } from '@/lib/ml-token'
 
 // ─── Comissões do ML por tipo de anúncio (tabela local — sem precisar de API auth)
 // Fonte: https://www.mercadolivre.com.br/ajuda/Custos-de-vender_1338
@@ -289,8 +289,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ── Tenta API oficial (usuário OAuth > app token > scraping) ────────────
-    const token = await getMLToken() ?? await getMLAppToken()
+    // ── Tenta API oficial (usuário OAuth > server token > scraping) ──────────
+    const token = await getMLToken() ?? await getMLServerToken()
     let item: MLScrapedData | null = null
 
     if (token) {
