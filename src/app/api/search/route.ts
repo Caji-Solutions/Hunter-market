@@ -488,28 +488,37 @@ export async function POST(req: NextRequest) {
 
     const cleanKeyword = keyword.trim()
 
-    // Prioridade: token do usuário > server token (ML_REFRESH_TOKEN) > scraping
-    const userToken   = await getMLToken()
-    const serverToken = userToken ?? await getMLServerToken()
-
     let products: GarimpoProduct[] = []
     let strategy = 'scraping'
 
-    // ── Tenta API oficial quando há token válido ────────────────────────────
-    if (serverToken) {
-      const apiResult = await searchViaAPI(serverToken, cleanKeyword, doDeep)
-      if (apiResult !== null) {
-        products = apiResult
-        strategy = userToken ? 'ml-api-oauth' : 'ml-api-server'
+    // 1) Token do usuário (cookie OAuth — se expirado, tenta server token)
+    const userToken = await getMLToken()
+    if (userToken) {
+      const result = await searchViaAPI(userToken, cleanKeyword, doDeep)
+      if (result !== null && result.length > 0) {
+        products = result
+        strategy = 'ml-api-oauth'
       }
     }
 
-    // ── Fallback: scraping ────────────────────────────────────────────────
+    // 2) Server token via ML_REFRESH_TOKEN (fallback automático)
+    if (products.length === 0) {
+      const serverToken = await getMLServerToken()
+      if (serverToken) {
+        const result = await searchViaAPI(serverToken, cleanKeyword, doDeep)
+        if (result !== null && result.length > 0) {
+          products = result
+          strategy = 'ml-api-server'
+        }
+      }
+    }
+
+    // 3) Scraping (último recurso — pode ser bloqueado em IPs de data center)
     if (products.length === 0 && strategy === 'scraping') {
       const { products: scraped, blocked } = await searchViaScraping(cleanKeyword, doDeep)
       if (blocked) {
         return NextResponse.json({
-          error: 'Busca bloqueada. Configure ML_REFRESH_TOKEN no Vercel (veja instruções em /api/auth/ml/status).',
+          error: 'Busca bloqueada pelo Mercado Livre. Tente novamente em alguns minutos.',
         }, { status: 429 })
       }
       products = scraped
