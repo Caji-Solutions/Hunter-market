@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Search, TrendingUp, Package, DollarSign, Star, ExternalLink, Loader2, BarChart3, ShoppingCart, Zap, AlertCircle, Gem, CheckCircle2, LogIn, X } from 'lucide-react'
+import { Search, TrendingUp, Package, DollarSign, Star, ExternalLink, Loader2, BarChart3, ShoppingCart, Zap, AlertCircle, Gem, CheckCircle2, LogIn, X, Brain, Lightbulb, ShieldAlert, ThumbsUp, ThumbsDown, Copy, Check, ChevronDown, ChevronUp } from 'lucide-react'
 import type { ProductAnalysis, ProfitResult, Supplier, ShippingQuote } from '@/types'
 import { formatCurrency, formatNumber, formatPercent, getScoreLabel } from '@/lib/utils'
 import { ScoreGauge } from '@/components/ScoreGauge'
@@ -10,6 +10,194 @@ import { SuppliersPanel } from '@/components/SuppliersPanel'
 import { ShippingPanel } from '@/components/ShippingPanel'
 import { CostBreakdownChart } from '@/components/CostBreakdownChart'
 import { GarimpoTab } from '@/components/GarimpoTab'
+
+interface ProductAIAnalysis {
+  posicionamento: string
+  nivel_competicao: 'baixo' | 'médio' | 'alto'
+  analise_competicao: string
+  precificacao: { atual_adequado: boolean; preco_sugerido_min: number; preco_sugerido_max: number; justificativa: string }
+  indicadores_positivos: string[]
+  alertas: string[]
+  recomendacao_final: string
+  proximos_passos: string[]
+}
+
+interface AIDescription {
+  titulo_otimizado: string
+  descricao: string
+  bullet_points: string[]
+  palavras_chave: string[]
+  dica_anuncio: string
+}
+
+// ─── Painel de análise IA do produto ─────────────────────────────────────────
+function AIProductPanel({ analysis }: { analysis: ProductAIAnalysis }) {
+  const competitionColor = { baixo: 'text-green-400', médio: 'text-yellow-400', alto: 'text-red-400' }[analysis.nivel_competicao]
+
+  return (
+    <div className="bg-gradient-to-br from-purple-950/60 via-gray-900 to-gray-900 border border-purple-500/30 rounded-xl overflow-hidden">
+      <div className="px-5 py-4 border-b border-purple-500/20 flex items-center gap-2">
+        <div className="w-8 h-8 rounded-lg bg-purple-500/20 border border-purple-500/30 flex items-center justify-center">
+          <Brain className="w-4 h-4 text-purple-400" />
+        </div>
+        <div>
+          <h3 className="text-white font-semibold text-sm">Consultoria IA · Gemini</h3>
+          <p className="text-xs text-gray-500">Análise estratégica gerada por inteligência artificial</p>
+        </div>
+      </div>
+
+      <div className="p-5 space-y-4">
+        {/* Posicionamento + Competição */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="p-3 bg-gray-800/50 rounded-lg">
+            <div className="text-xs text-gray-400 mb-1">Posicionamento de mercado</div>
+            <div className="text-sm text-white">{analysis.posicionamento}</div>
+          </div>
+          <div className="p-3 bg-gray-800/50 rounded-lg">
+            <div className="text-xs text-gray-400 mb-1">Nível de competição</div>
+            <div className={`text-sm font-bold capitalize ${competitionColor}`}>{analysis.nivel_competicao}</div>
+            <div className="text-xs text-gray-400 mt-1">{analysis.analise_competicao}</div>
+          </div>
+        </div>
+
+        {/* Precificação */}
+        <div className="p-3 bg-gray-800/50 rounded-lg">
+          <div className="flex items-center gap-2 mb-2">
+            <DollarSign className="w-4 h-4 text-orange-400" />
+            <span className="text-xs text-gray-400 font-medium">Recomendação de Preço</span>
+            {analysis.precificacao.atual_adequado ? (
+              <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full border border-green-500/30">Preço atual OK</span>
+            ) : (
+              <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded-full border border-yellow-500/30">Ajuste sugerido</span>
+            )}
+          </div>
+          {!analysis.precificacao.atual_adequado && analysis.precificacao.preco_sugerido_min > 0 && (
+            <div className="text-sm font-bold text-orange-400 mb-1">
+              {formatCurrency(analysis.precificacao.preco_sugerido_min)} – {formatCurrency(analysis.precificacao.preco_sugerido_max)}
+            </div>
+          )}
+          <div className="text-xs text-gray-300">{analysis.precificacao.justificativa}</div>
+        </div>
+
+        {/* Positivos + Alertas */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <div className="flex items-center gap-1.5 mb-2">
+              <ThumbsUp className="w-3.5 h-3.5 text-green-400" />
+              <span className="text-xs font-medium text-green-400 uppercase tracking-wide">Positivos</span>
+            </div>
+            <ul className="space-y-1.5">
+              {analysis.indicadores_positivos.map((item, i) => (
+                <li key={i} className="flex items-start gap-2 text-xs text-gray-300">
+                  <span className="text-green-400 mt-0.5 flex-shrink-0">✓</span>{item}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <div className="flex items-center gap-1.5 mb-2">
+              <ShieldAlert className="w-3.5 h-3.5 text-red-400" />
+              <span className="text-xs font-medium text-red-400 uppercase tracking-wide">Alertas</span>
+            </div>
+            <ul className="space-y-1.5">
+              {analysis.alertas.map((item, i) => (
+                <li key={i} className="flex items-start gap-2 text-xs text-gray-300">
+                  <span className="text-red-400 mt-0.5 flex-shrink-0">⚠</span>{item}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+
+        {/* Recomendação + Próximos passos */}
+        <div className="p-3 bg-purple-900/30 border border-purple-500/20 rounded-lg">
+          <div className="text-xs text-purple-400 font-medium mb-1">Recomendação Final</div>
+          <div className="text-sm text-white">{analysis.recomendacao_final}</div>
+        </div>
+
+        <div>
+          <div className="flex items-center gap-1.5 mb-2">
+            <Lightbulb className="w-3.5 h-3.5 text-blue-400" />
+            <span className="text-xs font-medium text-blue-400 uppercase tracking-wide">Próximos Passos</span>
+          </div>
+          <ol className="space-y-1.5">
+            {analysis.proximos_passos.map((step, i) => (
+              <li key={i} className="flex items-start gap-2 text-xs text-gray-300">
+                <span className="w-4 h-4 rounded-full bg-blue-500/20 border border-blue-500/30 text-blue-400 flex items-center justify-center flex-shrink-0 font-bold text-[10px]">{i + 1}</span>
+                {step}
+              </li>
+            ))}
+          </ol>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Painel de descrição gerada por IA ────────────────────────────────────────
+function AIDescribePanel({ desc, onClose }: { desc: AIDescription; onClose: () => void }) {
+  const [copied, setCopied] = useState<string | null>(null)
+
+  function copy(text: string, key: string) {
+    navigator.clipboard.writeText(text)
+    setCopied(key)
+    setTimeout(() => setCopied(null), 2000)
+  }
+
+  return (
+    <div className="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden">
+      <div className="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Brain className="w-4 h-4 text-purple-400" />
+          <span className="text-sm font-semibold text-white">Anúncio Gerado por IA</span>
+        </div>
+        <button onClick={onClose} className="text-gray-400 hover:text-white text-lg leading-none">×</button>
+      </div>
+      <div className="p-5 space-y-4">
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-xs text-gray-400 uppercase tracking-wide">Título Otimizado</label>
+            <button onClick={() => copy(desc.titulo_otimizado, 'titulo')} className="flex items-center gap-1 text-xs text-gray-400 hover:text-white">
+              {copied === 'titulo' ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+              {copied === 'titulo' ? 'Copiado!' : 'Copiar'}
+            </button>
+          </div>
+          <div className="p-3 bg-gray-800 rounded-lg text-sm text-white font-medium">{desc.titulo_otimizado}</div>
+        </div>
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-xs text-gray-400 uppercase tracking-wide">Descrição</label>
+            <button onClick={() => copy(desc.descricao, 'desc')} className="flex items-center gap-1 text-xs text-gray-400 hover:text-white">
+              {copied === 'desc' ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+              {copied === 'desc' ? 'Copiado!' : 'Copiar'}
+            </button>
+          </div>
+          <div className="p-3 bg-gray-800 rounded-lg text-sm text-gray-300 leading-relaxed">{desc.descricao}</div>
+        </div>
+        <div>
+          <label className="text-xs text-gray-400 uppercase tracking-wide mb-1.5 block">Pontos de Venda</label>
+          <ul className="space-y-1.5">
+            {desc.bullet_points.map((bp, i) => (
+              <li key={i} className="p-2.5 bg-gray-800 rounded-lg text-xs text-gray-300">{bp}</li>
+            ))}
+          </ul>
+        </div>
+        <div>
+          <label className="text-xs text-gray-400 uppercase tracking-wide mb-1.5 block">Palavras-chave SEO</label>
+          <div className="flex flex-wrap gap-1.5">
+            {desc.palavras_chave.map((kw, i) => (
+              <span key={i} className="px-2.5 py-1 bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs rounded-full">{kw}</span>
+            ))}
+          </div>
+        </div>
+        <div className="p-3 bg-orange-500/10 border border-orange-500/30 rounded-lg flex items-start gap-2">
+          <Lightbulb className="w-4 h-4 text-orange-400 flex-shrink-0 mt-0.5" />
+          <p className="text-orange-300 text-xs">{desc.dica_anuncio}</p>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'analyze' | 'garimpo'>('analyze')
@@ -24,6 +212,12 @@ export default function Home() {
   const [mlUserId, setMlUserId] = useState<string | null>(null)
   const [mlConnecting, setMlConnecting] = useState(false)
   const [mlNotification, setMlNotification] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
+
+  // IA
+  const [aiProductAnalysis, setAIProductAnalysis] = useState<ProductAIAnalysis | null>(null)
+  const [aiProductLoading, setAIProductLoading] = useState(false)
+  const [aiDescription, setAIDescription] = useState<AIDescription | null>(null)
+  const [aiDescribeLoading, setAIDescribeLoading] = useState(false)
 
   useEffect(() => {
     // Lê o cookie ml_user_id (não HttpOnly, acessível no client)
@@ -80,6 +274,8 @@ export default function Home() {
     setProfit(null)
     setSuppliers([])
     setShippingQuotes([])
+    setAIProductAnalysis(null)
+    setAIDescription(null)
 
     try {
       const res = await fetch('/api/analyze', {
@@ -136,6 +332,57 @@ export default function Home() {
     })
     const data = await res.json()
     if (res.ok) setProfit(data)
+  }
+
+  async function handleAIProductAnalysis() {
+    if (!analysis) return
+    setAIProductLoading(true)
+    setAIProductAnalysis(null)
+    try {
+      const res = await fetch('/api/ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'product_analysis', data: analysis }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro na análise IA')
+      setAIProductAnalysis(data)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Erro ao analisar com IA')
+    } finally {
+      setAIProductLoading(false)
+    }
+  }
+
+  async function handleAIDescribe() {
+    if (!analysis) return
+    setAIDescribeLoading(true)
+    setAIDescription(null)
+    try {
+      const res = await fetch('/api/ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'describe',
+          data: {
+            title: analysis.product.title,
+            price: analysis.product.price,
+            category: analysis.product.categoryName,
+            soldQuantity: analysis.product.soldQuantity,
+            freeShipping: analysis.product.freeShipping,
+            logisticType: analysis.product.logisticType,
+            listingType: analysis.product.listingType,
+          },
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao gerar descrição')
+      setAIDescription(data)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Erro ao gerar descrição')
+    } finally {
+      setAIDescribeLoading(false)
+    }
   }
 
   function handleRecalcProfit(
@@ -444,6 +691,49 @@ export default function Home() {
             <SuppliersPanel suppliers={suppliers} productTitle={analysis.product.title} mlPrice={analysis.product.price} />
 
             <ShippingPanel quotes={shippingQuotes} productPrice={analysis.product.price} />
+
+            {/* ─── Seção IA ──────────────────────────────────────────────── */}
+            <div className="border-t border-gray-800 pt-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-purple-500/20 border border-purple-500/30 flex items-center justify-center">
+                    <Brain className="w-4 h-4 text-purple-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-white font-semibold text-sm">Ferramentas de IA</h3>
+                    <p className="text-xs text-gray-500">Análise estratégica e criação de conteúdo com Gemini</p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleAIProductAnalysis}
+                    disabled={aiProductLoading}
+                    className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-sm font-medium rounded-xl transition"
+                  >
+                    {aiProductLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Brain className="w-4 h-4" />}
+                    {aiProductLoading ? 'Analisando...' : 'Analisar com IA'}
+                  </button>
+                  <button
+                    onClick={handleAIDescribe}
+                    disabled={aiDescribeLoading}
+                    className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 disabled:opacity-50 text-gray-300 hover:text-white text-sm font-medium rounded-xl transition"
+                  >
+                    {aiDescribeLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lightbulb className="w-4 h-4" />}
+                    {aiDescribeLoading ? 'Gerando...' : 'Gerar Descrição IA'}
+                  </button>
+                </div>
+              </div>
+
+              {aiProductAnalysis && (
+                <div className="mb-4">
+                  <AIProductPanel analysis={aiProductAnalysis} />
+                </div>
+              )}
+
+              {aiDescription && (
+                <AIDescribePanel desc={aiDescription} onClose={() => setAIDescription(null)} />
+              )}
+            </div>
           </div>
         )}
         </>}

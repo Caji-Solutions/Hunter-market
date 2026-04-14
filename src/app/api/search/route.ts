@@ -92,10 +92,12 @@ function buildProduct(p: {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ─── CAMINHO 1: API OFICIAL DO ML (quando autenticado via OAuth) ──────────────
+// ─── CAMINHO 1: API OFICIAL DO ML ─────────────────────────────────────────────
+// Usa /products/search (funciona) + /products/{id} + /items?ids= (multi-get)
+// porque /sites/MLB/search está bloqueado para chamadas servidor-a-servidor
 // ═══════════════════════════════════════════════════════════════════════════════
 
-interface MLAPIResult {
+interface MLItemResult {
   id: string
   title: string
   price: number
@@ -105,19 +107,17 @@ interface MLAPIResult {
   available_quantity: number
   sold_quantity: number
   shipping: { free_shipping: boolean; logistic_type: string }
-  reviews?: { rating_average: number; total: number }
-  seller?: { id: number; nickname: string }
 }
 
-function fromAPIResult(r: MLAPIResult): GarimpoProduct {
+function fromItemResult(r: MLItemResult): GarimpoProduct {
   return buildProduct({
     id: r.id,
     title: r.title,
     price: r.price,
     image: (r.thumbnail ?? '').replace('http://', 'https://'),
     url: r.permalink ?? '',
-    rating: r.reviews?.rating_average ?? null,
-    reviewCount: r.reviews?.total ?? null,
+    rating: null,
+    reviewCount: null,
     soldQuantity: r.sold_quantity ?? 0,
     availableQuantity: r.available_quantity ?? 0,
     listingType: r.listing_type_id ?? 'gold_special',
@@ -126,51 +126,112 @@ function fromAPIResult(r: MLAPIResult): GarimpoProduct {
   })
 }
 
-async function fetchMLAPIPage(
-  token: string, keyword: string, offset: number
-): Promise<{ items: GarimpoProduct[]; total: number; tokenInvalid: boolean }> {
-  const url = `https://api.mercadolibre.com/sites/MLB/search?q=${encodeURIComponent(keyword)}&limit=50&offset=${offset}`
-  try {
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(15000),
-    })
-    if (res.status === 401 || res.status === 403) {
-      console.warn('[ML API] Token inválido ou expirado', res.status)
-      return { items: [], total: 0, tokenInvalid: true }
+// Busca item IDs usando /items?ids=... e converte para GarimpoProduct
+async function multiGetItems(token: string, ids: string[]): Promise<GarimpoProduct[]> {
+  const unique = [...new Set(ids)].filter(Boolean)
+  if (unique.length === 0) return []
+  const products: GarimpoProduct[] = []
+  const seen = new Set<string>()
+
+  for (let i = 0; i < unique.length; i += 20) {
+    const batch = unique.slice(i, i + 20)
+    try {
+      const res = await fetch(
+        `https://api.mercadolibre.com/items?ids=${batch.join(',')}`,
+        { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(12000) }
+      )
+      if (!res.ok) continue
+      const items: Array<{ code: number; body?: MLItemResult }> = await res.json()
+      for (const item of items) {
+        if (item.code !== 200 || !item.body || seen.has(item.body.id)) continue
+        seen.add(item.body.id)
+        const r = item.body
+        if (!r.price || r.price <= 0 || !r.title) continue
+        products.push(fromItemResult(r))
+      }
+    } catch (err) {
+      console.error('[ML API] multiGetItems batch', i, err instanceof Error ? err.message : err)
     }
-    if (!res.ok) return { items: [], total: 0, tokenInvalid: false }
-    const data = await res.json()
-    return {
-      items: (data.results ?? []).map(fromAPIResult),
-      total: data.paging?.total ?? 0,
-      tokenInvalid: false,
-    }
-  } catch (err) {
-    console.error('[ML API] fetchMLAPIPage offset', offset, err instanceof Error ? err.message : err)
-    return { items: [], total: 0, tokenInvalid: false }
   }
+  return products
+}
+
+// Resolve item IDs de catálogos via /products/{id} (em paralelo)
+async function resolveCatalogItemIds(token: string, catalogIds: string[], limit: number): Promise<string[]> {
+  const toResolve = catalogIds.slice(0, limit)
+  const results = await Promise.allSettled(
+    toResolve.map(async (catalogId) => {
+      try {
+        const res = await fetch(
+          `https://api.mercadolibre.com/products/${catalogId}`,
+          { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8000) }
+        )
+        if (!res.ok) return null
+        const data = await res.json()
+        return (data.buy_box_winner?.item_id as string | undefined) ?? null
+      } catch { return null }
+    })
+  )
+  return results
+    .map(r => (r.status === 'fulfilled' ? r.value : null))
+    .filter((id): id is string => !!id)
 }
 
 async function searchViaAPI(token: string, keyword: string, deep: boolean): Promise<GarimpoProduct[] | null> {
-  if (deep) {
-    const [r1, r2, r3] = await Promise.all([
-      fetchMLAPIPage(token, keyword, 0),
-      fetchMLAPIPage(token, keyword, 50),
-      fetchMLAPIPage(token, keyword, 100),
-    ])
-    if (r1.tokenInvalid) return null // sinaliza fallback para scraping
-    const seen = new Set<string>()
-    const all: GarimpoProduct[] = []
-    for (const item of [...r1.items, ...r2.items, ...r3.items]) {
-      if (!seen.has(item.id)) { seen.add(item.id); all.push(item) }
+  const offsets = deep ? [0, 20, 40] : [0]
+  const allEntries: Array<{
+    id: string
+    buy_box_winner?: { item_id?: string } | null
+  }> = []
+
+  // Passo 1: /products/search — retorna entradas de catálogo (sempre 200 com token válido)
+  for (const offset of offsets) {
+    try {
+      const res = await fetch(
+        `https://api.mercadolibre.com/products/search?site_id=MLB&q=${encodeURIComponent(keyword)}&limit=20&offset=${offset}`,
+        { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(12000) }
+      )
+      if (res.status === 401 || res.status === 403) {
+        console.warn('[ML API] Token inválido ou sem permissão', res.status)
+        return null
+      }
+      if (!res.ok) {
+        console.warn('[ML API] /products/search status', res.status)
+        continue
+      }
+      const data = await res.json()
+      allEntries.push(...(data.results ?? []))
+    } catch (err) {
+      console.error('[ML API] /products/search offset', offset, err instanceof Error ? err.message : err)
     }
-    return all
-  } else {
-    const { items, tokenInvalid } = await fetchMLAPIPage(token, keyword, 0)
-    if (tokenInvalid) return null
-    return items
   }
+
+  if (allEntries.length === 0) return []
+
+  // Passo 2: Separa entradas com/sem buy_box_winner.item_id
+  const itemIdsReady: string[] = []
+  const catalogIdsNeedResolve: string[] = []
+
+  for (const entry of allEntries) {
+    if (entry.buy_box_winner?.item_id) {
+      itemIdsReady.push(entry.buy_box_winner.item_id)
+    } else {
+      catalogIdsNeedResolve.push(entry.id)
+    }
+  }
+
+  // Passo 3: Para catálogos sem item_id, tenta /products/{id} para pegar buy_box_winner
+  let resolvedIds: string[] = []
+  if (catalogIdsNeedResolve.length > 0) {
+    const limit = deep ? 15 : 8
+    resolvedIds = await resolveCatalogItemIds(token, catalogIdsNeedResolve, limit)
+  }
+
+  const allItemIds = [...itemIdsReady, ...resolvedIds]
+  if (allItemIds.length === 0) return []
+
+  // Passo 4: /items?ids=... — busca dados completos (preço, estoque, vendidos, etc.)
+  return await multiGetItems(token, allItemIds)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -450,15 +511,19 @@ async function searchViaScraping(keyword: string, deep: boolean): Promise<{ prod
 
 // ─── GET handler: diagnóstico de conexão ─────────────────────────────────────
 export async function GET() {
-  const token = await getMLToken()
+  const userToken   = await getMLToken()
+  const serverToken = await getMLServerToken()
+  const token = userToken ?? serverToken
+
   if (token) {
     try {
-      const res = await fetch('https://api.mercadolibre.com/sites/MLB/search?q=fone-bluetooth&limit=1', {
-        headers: { Authorization: `Bearer ${token}` },
-        signal: AbortSignal.timeout(8000),
-      })
+      const res = await fetch(
+        'https://api.mercadolibre.com/products/search?site_id=MLB&q=fone-bluetooth&limit=1',
+        { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8000) }
+      )
       if (res.ok) {
-        return NextResponse.json({ status: 'ok', message: 'API oficial do ML OK (autenticado)', strategy: 'ml-api-oauth' })
+        const strategy = userToken ? 'ml-api-oauth' : 'ml-api-server'
+        return NextResponse.json({ status: 'ok', message: 'API do ML OK (products/search)', strategy })
       }
     } catch { /* cai no scraping abaixo */ }
   }
